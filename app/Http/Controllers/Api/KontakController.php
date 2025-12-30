@@ -47,10 +47,16 @@ class KontakController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'nama' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
-            'subjek' => 'required|string|max:255',
-            'pesan' => 'required|string',
+            'nama' => 'required|string|max:255|regex:/^[a-zA-Z\s]+$/',
+            'email' => 'required|email:rfc,dns|max:255',
+            'subjek' => 'required|string|max:255|min:5',
+            'pesan' => 'required|string|max:2000|min:10',
+        ], [
+            'nama.regex' => 'Nama hanya boleh berisi huruf dan spasi',
+            'email.email' => 'Format email tidak valid',
+            'subjek.min' => 'Subjek minimal 5 karakter',
+            'pesan.min' => 'Pesan minimal 10 karakter',
+            'pesan.max' => 'Pesan maksimal 2000 karakter',
         ]);
 
         if ($validator->fails()) {
@@ -61,12 +67,22 @@ class KontakController extends Controller
             ], 422);
         }
 
-        $kontak = Kontak::create([
-            'nama' => $request->nama,
-            'email' => $request->email,
-            'subjek' => $request->subjek,
-            'pesan' => $request->pesan,
+        // Sanitize input
+        $data = [
+            'nama' => ucwords(strtolower(trim($request->nama))),
+            'email' => strtolower(trim($request->email)),
+            'subjek' => trim($request->subjek),
+            'pesan' => trim($request->pesan),
             'status' => 'baru',
+        ];
+
+        $kontak = Kontak::create($data);
+        
+        // Log message submission
+        \Log::info('Kontak message submitted', [
+            'id' => $kontak->id,
+            'email' => $kontak->email,
+            'ip' => $request->ip()
         ]);
 
         return response()->json([

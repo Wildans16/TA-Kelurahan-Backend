@@ -7,14 +7,29 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
     public function login(Request $request)
     {
+        // Rate limiting: Max 5 attempts per minute
+        $key = Str::lower($request->input('username')) . '|' . $request->ip();
+        
+        if (RateLimiter::tooManyAttempts($key, 5)) {
+            $seconds = RateLimiter::availableIn($key);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Terlalu banyak percobaan login. Silakan coba lagi dalam ' . ceil($seconds / 60) . ' menit.',
+            ], 429);
+        }
+
         $validator = Validator::make($request->all(), [
-            'username' => 'required|string',
-            'password' => 'required|string',
+            'username' => 'required|string|max:255',
+            'password' => 'required|string|min:6',
         ]);
 
         if ($validator->fails()) {
@@ -30,11 +45,16 @@ class AuthController extends Controller
                    ->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
+            RateLimiter::hit($key, 60);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Username atau password salah'
             ], 401);
         }
+        
+        // Clear rate limiter on successful login
+        RateLimiter::clear($key);
 
         // Update last login
         $user->update(['last_login' => now()]);

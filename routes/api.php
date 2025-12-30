@@ -11,14 +11,19 @@ use App\Http\Controllers\Api\KontakController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\BerkasController;
 
-// Public routes
-Route::post('/login', [AuthController::class, 'login']);
-Route::get('/layanan', [LayananController::class, 'index']);
-Route::get('/layanan/{id}', [LayananController::class, 'show']);
-Route::post('/permohonan', [PermohonanController::class, 'store']);
-Route::post('/status/check', [StatusController::class, 'check']);
-Route::post('/kontak', [KontakController::class, 'store']);
-Route::post('/berkas', [BerkasController::class, 'store']);
+// Public routes with rate limiting
+Route::middleware('throttle:10,1')->group(function () {
+    Route::post('/login', [AuthController::class, 'login']);
+});
+
+Route::middleware('throttle:30,1')->group(function () {
+    Route::get('/layanan', [LayananController::class, 'index']);
+    Route::get('/layanan/{id}', [LayananController::class, 'show']);
+    Route::post('/permohonan', [PermohonanController::class, 'store']);
+    Route::post('/status/check', [StatusController::class, 'check']);
+    Route::post('/kontak', [KontakController::class, 'store']);
+    Route::post('/berkas', [BerkasController::class, 'store']);
+});
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -53,6 +58,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/permohonan/{id}/status', [PermohonanController::class, 'updateStatus']);
     Route::post('/permohonan/bulk-update-status', [PermohonanController::class, 'bulkUpdateStatus']);
     Route::delete('/permohonan/bulk-delete', [PermohonanController::class, 'bulkDelete']);
+    
+    // Export routes (admin & petugas)
+    Route::get('/permohonan/export/excel', [PermohonanController::class, 'exportExcel']);
+    Route::get('/permohonan/export/pdf', [PermohonanController::class, 'exportPdf']);
     
     // Berkas management
     Route::get('/berkas/{id}', [BerkasController::class, 'show']);

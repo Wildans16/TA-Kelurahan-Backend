@@ -15,8 +15,18 @@ class BerkasController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'permohonan_id' => 'required|exists:permohonan,id',
-            'jenis_berkas' => 'required|string',
-            'file' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120', // 5MB max
+            'jenis_berkas' => 'required|string|max:100',
+            'file' => [
+                'required',
+                'file',
+                'mimes:pdf,jpg,jpeg,png',
+                'max:5120', // 5MB max
+                'mimetypes:application/pdf,image/jpeg,image/png',
+            ],
+        ], [
+            'file.max' => 'Ukuran file maksimal 5MB',
+            'file.mimes' => 'File harus berformat PDF, JPG, JPEG, atau PNG',
+            'file.mimetypes' => 'Tipe file tidak valid',
         ]);
 
         if ($validator->fails()) {
@@ -29,7 +39,26 @@ class BerkasController extends Controller
 
         try {
             $file = $request->file('file');
-            $fileName = time() . '_' . $file->getClientOriginalName();
+            
+            // Sanitize filename - remove special characters
+            $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+            $extension = $file->getClientOriginalExtension();
+            $safeName = preg_replace('/[^A-Za-z0-9\-_]/', '_', $originalName);
+            $fileName = time() . '_' . $safeName . '.' . $extension;
+            
+            // Validate actual file content (check magic bytes)
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mimeType = finfo_file($finfo, $file->getPathname());
+            finfo_close($finfo);
+            
+            $allowedMimes = ['application/pdf', 'image/jpeg', 'image/png'];
+            if (!in_array($mimeType, $allowedMimes)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tipe file tidak valid. File telah diubah atau korup.'
+                ], 422);
+            }
+            
             $filePath = $file->storeAs('berkas', $fileName, 'public');
 
             $berkas = Berkas::create([
@@ -37,7 +66,7 @@ class BerkasController extends Controller
                 'jenis_berkas' => $request->jenis_berkas,
                 'nama_file' => $fileName,
                 'path' => $filePath,
-                'mime_type' => $file->getMimeType(),
+                'mime_type' => $mimeType,
                 'size' => $file->getSize(),
             ]);
 
@@ -48,10 +77,15 @@ class BerkasController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
+            // Log error untuk debugging
+            \Log::error('File upload failed: ' . $e->getMessage(), [
+                'permohonan_id' => $request->permohonan_id,
+                'user_ip' => $request->ip()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal mengupload file',
-                'error' => $e->getMessage()
+                'message' => 'Gagal mengupload file. Silakan coba lagi.'
             ], 500);
         }
     }

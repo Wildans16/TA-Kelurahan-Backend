@@ -9,6 +9,8 @@ use App\Models\Berkas;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Maatwebsite\Excel\Facades\Excel;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class PermohonanController extends Controller
 {
@@ -47,18 +49,41 @@ class PermohonanController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'layanan_id' => 'required|exists:layanan,id',
-            'nama' => 'required|string|max:255',
-            'nik' => 'required|string|size:16',
-            'tempat_lahir' => 'required|string|max:255',
-            'tanggal_lahir' => 'required|date',
+            'nama' => 'required|string|max:255|regex:/^[a-zA-Z\s]+$/',
+            'nik' => [
+                'required',
+                'string',
+                'size:16',
+                'regex:/^[0-9]{16}$/',
+                'unique:permohonan,nik,NULL,id,deleted_at,NULL'
+            ],
+            'tempat_lahir' => 'required|string|max:255|regex:/^[a-zA-Z\s]+$/',
+            'tanggal_lahir' => 'required|date|before:today|after:1900-01-01',
             'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-            'alamat' => 'required|string',
-            'rt' => 'required|string|max:3',
-            'rw' => 'required|string|max:3',
-            'no_hp' => 'required|string|max:15',
-            'email' => 'required|email|max:255',
-            'keperluan' => 'required|string',
-            'keterangan' => 'nullable|string',
+            'alamat' => 'required|string|max:500',
+            'rt' => 'required|string|max:3|regex:/^[0-9]{1,3}$/',
+            'rw' => 'required|string|max:3|regex:/^[0-9]{1,3}$/',
+            'no_hp' => [
+                'required',
+                'string',
+                'max:15',
+                'regex:/^(\+62|62|0)[0-9]{9,13}$/'
+            ],
+            'email' => 'required|email:rfc,dns|max:255',
+            'keperluan' => 'required|string|max:1000',
+            'keterangan' => 'nullable|string|max:1000',
+        ], [
+            'nama.regex' => 'Nama hanya boleh berisi huruf dan spasi',
+            'nik.size' => 'NIK harus 16 digit',
+            'nik.regex' => 'NIK harus berupa angka',
+            'nik.unique' => 'NIK sudah terdaftar dalam sistem',
+            'tempat_lahir.regex' => 'Tempat lahir hanya boleh berisi huruf dan spasi',
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini',
+            'tanggal_lahir.after' => 'Tanggal lahir tidak valid',
+            'rt.regex' => 'RT harus berupa angka',
+            'rw.regex' => 'RW harus berupa angka',
+            'no_hp.regex' => 'Format nomor HP tidak valid (contoh: 081234567890)',
+            'email.email' => 'Format email tidak valid',
         ]);
 
         if ($validator->fails()) {
@@ -68,12 +93,34 @@ class PermohonanController extends Controller
                 'errors' => $validator->errors()
             ], 422);
         }
+        
+        // Additional validation: Check age (min 17 years old for KTP)
+        $birthDate = new \DateTime($request->tanggal_lahir);
+        $today = new \DateTime('today');
+        $age = $birthDate->diff($today)->y;
+        
+        if ($age < 17) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usia minimal untuk mengajukan permohonan adalah 17 tahun'
+            ], 422);
+        }
+        
+        // Sanitize input data
+        $data = $request->all();
+        $data['nama'] = ucwords(strtolower(trim($data['nama'])));
+        $data['tempat_lahir'] = ucwords(strtolower(trim($data['tempat_lahir'])));
+        $data['alamat'] = trim($data['alamat']);
+        $data['keperluan'] = trim($data['keperluan']);
+        if (isset($data['keterangan'])) {
+            $data['keterangan'] = trim($data['keterangan']);
+        }
 
         DB::beginTransaction();
         try {
             // Buat permohonan dengan status awal 'baru'
             $permohonan = Permohonan::create(array_merge(
-                $request->all(),
+                $data,
                 ['status' => 'baru']
             ));
 
@@ -92,6 +139,13 @@ class PermohonanController extends Controller
             $permohonan->update(['estimasi_selesai' => $estimasi]);
 
             DB::commit();
+            
+            // Log successful submission
+            \Log::info('Permohonan created', [
+                'nomor_registrasi' => $permohonan->nomor_registrasi,
+                'nik' => $permohonan->nik,
+                'ip' => $request->ip()
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -319,6 +373,75 @@ class PermohonanController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menghapus permohonan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function exportExcel(Request $request)
+    {
+        try {
+            $query = Permohonan::with(['layanan']);
+            
+            // Filter by date range
+            if ($request->has('start_date') && $request->has('end_date')) {
+                $query->whereBetween('created_at', [
+                    $request->start_date . ' 00:00:00',
+                    $request->end_date . ' 23:59:59'
+                ]);
+            }
+            
+            // Filter by status
+            if ($request->has('status') && $request->status !== 'all') {
+                $query->where('status', $request->status);
+            }
+            
+            $data = $query->orderBy('created_at', 'desc')->get();
+            
+            // Create Excel file
+            return Excel::download(new \App\Exports\PermohonanExport($data), 
+                'Laporan_Permohonan_' . date('Y-m-d_His') . '.xlsx');
+                
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal export Excel: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    public function exportPdf(Request $request)
+    {
+        try {
+            $query = Permohonan::with(['layanan']);
+            
+            // Filter by date range
+            if ($request->has('start_date') && $request->has('end_date')) {
+                $query->whereBetween('created_at', [
+                    $request->start_date . ' 00:00:00',
+                    $request->end_date . ' 23:59:59'
+                ]);
+            }
+            
+            // Filter by status
+            if ($request->has('status') && $request->status !== 'all') {
+                $query->where('status', $request->status);
+            }
+            
+            $data = $query->orderBy('created_at', 'desc')->get();
+            
+            $pdf = Pdf::loadView('exports.permohonan-pdf', [
+                'data' => $data,
+                'start_date' => $request->start_date,
+                'end_date' => $request->end_date,
+                'status' => $request->status
+            ]);
+            
+            return $pdf->download('Laporan_Permohonan_' . date('Y-m-d_His') . '.pdf');
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal export PDF: ' . $e->getMessage()
             ], 500);
         }
     }
