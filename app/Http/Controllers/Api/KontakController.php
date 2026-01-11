@@ -204,18 +204,18 @@ class KontakController extends Controller
         }
 
         // Cek apakah email sudah dikonfigurasi
-        $smtpConfigured = config('mail.mailers.smtp.username') && config('mail.mailers.smtp.password');
         $resendConfigured = config('services.resend.key');
+        $smtpConfigured = config('mail.mailers.smtp.username') && config('mail.mailers.smtp.password');
 
-        if (!$smtpConfigured && !$resendConfigured) {
+        if (!$resendConfigured && !$smtpConfigured) {
             \Log::warning('Email not configured', [
                 'kontak_id' => $id,
-                'message' => 'SMTP and Resend not configured'
+                'message' => 'Resend and SMTP not configured'
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Email belum dikonfigurasi. Silakan hubungi administrator untuk mengatur SMTP atau Resend API.',
+                'message' => 'Email belum dikonfigurasi. Silakan hubungi administrator untuk mengatur Resend API atau SMTP.',
                 'details' => 'Email configuration missing'
             ], 503);
         }
@@ -224,29 +224,8 @@ class KontakController extends Controller
             $emailSent = false;
             $provider = null;
 
-            // Try SMTP first (Gmail) if configured
-            if ($smtpConfigured) {
-                try {
-                    Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
-                    
-                    $emailSent = true;
-                    $provider = 'SMTP (Gmail)';
-                    
-                    \Log::info('Reply sent via SMTP', [
-                        'kontak_id' => $kontak->id,
-                        'email' => $kontak->email
-                    ]);
-
-                } catch (\Exception $smtpError) {
-                    \Log::warning('SMTP failed, trying Resend', [
-                        'kontak_id' => $id,
-                        'error' => $smtpError->getMessage()
-                    ]);
-                }
-            }
-
-            // Fallback to Resend if SMTP failed or not configured
-            if (!$emailSent && $resendConfigured) {
+            // Try Resend FIRST (more reliable on Railway, HTTP-based)
+            if ($resendConfigured) {
                 try {
                     Mail::mailer('resend')->send(new BalasanPesanKontak($kontak, $request->balasan));
                     
@@ -259,9 +238,30 @@ class KontakController extends Controller
                     ]);
 
                 } catch (\Exception $resendError) {
-                    \Log::error('Resend failed', [
+                    \Log::warning('Resend failed, trying SMTP', [
                         'kontak_id' => $id,
                         'error' => $resendError->getMessage()
+                    ]);
+                }
+            }
+
+            // Fallback to SMTP if Resend failed or not configured
+            if (!$emailSent && $smtpConfigured) {
+                try {
+                    Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                    
+                    $emailSent = true;
+                    $provider = 'SMTP (Gmail)';
+                    
+                    \Log::info('Reply sent via SMTP', [
+                        'kontak_id' => $kontak->id,
+                        'email' => $kontak->email
+                    ]);
+
+                } catch (\Exception $smtpError) {
+                    \Log::error('SMTP failed', [
+                        'kontak_id' => $id,
+                        'error' => $smtpError->getMessage()
                     ]);
                 }
             }
