@@ -85,6 +85,9 @@ echo "✅ MySQL is ready!"
 # Clear config only (before migration)
 echo "🧹 Clearing config cache..."
 php artisan config:clear
+php artisan route:clear || true
+php artisan view:clear || true
+php artisan cache:clear || true
 
 # Run migrations FIRST (create tables)
 echo "🗄️ Running migrations..."

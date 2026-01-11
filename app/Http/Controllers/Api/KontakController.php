@@ -224,35 +224,29 @@ class KontakController extends Controller
             $emailSent = false;
             $provider = null;
 
-            // Try Resend FIRST (more reliable on Railway, HTTP-based)
-            if ($resendConfigured) {
+            // Try SMTP first (Gmail) - More reliable for now
+            if ($smtpConfigured) {
                 try {
-                    $fromEmail = config('services.resend.from_email', 'onboarding@resend.dev');
-                    $fromName = config('services.resend.from_name', 'Kelurahan Graha Indah');
-                    
-                    Mail::mailer('resend')->send(
-                        new BalasanPesanKontak($kontak, $request->balasan, $fromEmail, $fromName)
-                    );
+                    Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
                     
                     $emailSent = true;
-                    $provider = 'Resend API';
+                    $provider = 'SMTP (Gmail)';
                     
-                    \Log::info('Reply sent via Resend', [
+                    \Log::info('Reply sent via SMTP', [
                         'kontak_id' => $kontak->id,
-                        'email' => $kontak->email,
-                        'from' => $fromEmail
+                        'email' => $kontak->email
                     ]);
 
-                } catch (\Exception $resendError) {
-                    \Log::warning('Resend failed, trying SMTP', [
+                } catch (\Exception $smtpError) {
+                    \Log::warning('SMTP failed, trying Resend', [
                         'kontak_id' => $id,
-                        'error' => $resendError->getMessage()
+                        'error' => $smtpError->getMessage()
                     ]);
                 }
             }
 
-            // Fallback to SMTP if Resend failed or not configured
-            if (!$emailSent && $smtpConfigured) {
+            // Fallback to Resend if SMTP failed or not configured
+            if (!$emailSent && $resendConfigured) {
                 try {
                     Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
                     
