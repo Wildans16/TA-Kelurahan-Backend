@@ -203,55 +203,93 @@ class KontakController extends Controller
             ], 422);
         }
 
+        // Cek apakah email sudah dikonfigurasi
+        $smtpConfigured = config('mail.mailers.smtp.username') && config('mail.mailers.smtp.password');
+        $resendConfigured = config('services.resend.key');
+
+        if (!$smtpConfigured && !$resendConfigured) {
+            \Log::warning('Email not configured', [
+                'kontak_id' => $id,
+                'message' => 'SMTP and Resend not configured'
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Email belum dikonfigurasi. Silakan hubungi administrator untuk mengatur SMTP atau Resend API.',
+                'details' => 'Email configuration missing'
+            ], 503);
+        }
+
         try {
-            // Try SMTP first (Gmail)
-            try {
-                Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
-                
+            $emailSent = false;
+            $provider = null;
+
+            // Try SMTP first (Gmail) if configured
+            if ($smtpConfigured) {
+                try {
+                    Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                    
+                    $emailSent = true;
+                    $provider = 'SMTP (Gmail)';
+                    
+                    \Log::info('Reply sent via SMTP', [
+                        'kontak_id' => $kontak->id,
+                        'email' => $kontak->email
+                    ]);
+
+                } catch (\Exception $smtpError) {
+                    \Log::warning('SMTP failed, trying Resend', [
+                        'kontak_id' => $id,
+                        'error' => $smtpError->getMessage()
+                    ]);
+                }
+            }
+
+            // Fallback to Resend if SMTP failed or not configured
+            if (!$emailSent && $resendConfigured) {
+                try {
+                    Mail::mailer('resend')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                    
+                    $emailSent = true;
+                    $provider = 'Resend API';
+                    
+                    \Log::info('Reply sent via Resend', [
+                        'kontak_id' => $kontak->id,
+                        'email' => $kontak->email
+                    ]);
+
+                } catch (\Exception $resendError) {
+                    \Log::error('Resend failed', [
+                        'kontak_id' => $id,
+                        'error' => $resendError->getMessage()
+                    ]);
+                }
+            }
+
+            if ($emailSent) {
+                // Update status menjadi dibalas
                 $kontak->update(['status' => 'dibalas']);
-                
-                \Log::info('Reply sent via SMTP', [
-                    'kontak_id' => $kontak->id,
-                    'email' => $kontak->email
-                ]);
 
                 return response()->json([
                     'success' => true,
-                    'message' => 'Balasan berhasil dikirim via SMTP (Gmail)',
-                    'provider' => 'SMTP'
+                    'message' => "Balasan berhasil dikirim via {$provider}",
+                    'provider' => $provider
                 ]);
-
-            } catch (\Exception $smtpError) {
-                \Log::warning('SMTP failed, trying Resend', [
-                    'error' => $smtpError->getMessage()
-                ]);
-
-                // Fallback to Resend
-                Mail::mailer('resend')->send(new BalasanPesanKontak($kontak, $request->balasan));
-                
-                $kontak->update(['status' => 'dibalas']);
-                
-                \Log::info('Reply sent via Resend', [
-                    'kontak_id' => $kontak->id,
-                    'email' => $kontak->email
-                ]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Balasan berhasil dikirim via Resend API',
-                    'provider' => 'Resend'
-                ]);
+            } else {
+                throw new \Exception('Semua provider email gagal mengirim');
             }
 
         } catch (\Exception $e) {
             \Log::error('All email providers failed', [
                 'kontak_id' => $id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal mengirim email: ' . $e->getMessage()
+                'message' => 'Gagal mengirim email. Silakan coba lagi atau hubungi administrator.',
+                'details' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
     }
