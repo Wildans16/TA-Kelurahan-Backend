@@ -27,7 +27,8 @@ class BalasanPesanKontak extends Mailable
      */
     public function build()
     {
-        return $this->subject('Balasan Pesan Anda - Kelurahan Graha Indah')
+        return $this->to($this->kontak->email, $this->kontak->nama)
+            ->subject('Balasan Pesan Anda - Kelurahan Graha Indah')
             ->view('emails.balasan_pesan_kontak')
             ->with([
                 'kontak' => $this->kontak,
