@@ -227,14 +227,20 @@ class KontakController extends Controller
             // Try Resend FIRST (more reliable on Railway, HTTP-based)
             if ($resendConfigured) {
                 try {
-                    Mail::mailer('resend')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                    $fromEmail = config('services.resend.from_email', 'onboarding@resend.dev');
+                    $fromName = config('services.resend.from_name', 'Kelurahan Graha Indah');
+                    
+                    Mail::mailer('resend')->send(
+                        new BalasanPesanKontak($kontak, $request->balasan, $fromEmail, $fromName)
+                    );
                     
                     $emailSent = true;
                     $provider = 'Resend API';
                     
                     \Log::info('Reply sent via Resend', [
                         'kontak_id' => $kontak->id,
-                        'email' => $kontak->email
+                        'email' => $kontak->email,
+                        'from' => $fromEmail
                     ]);
 
                 } catch (\Exception $resendError) {

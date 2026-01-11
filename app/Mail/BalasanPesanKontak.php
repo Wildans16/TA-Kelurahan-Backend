@@ -12,14 +12,18 @@ class BalasanPesanKontak extends Mailable
 
     public $kontak;
     public $balasan;
+    public $fromEmail;
+    public $fromName;
 
     /**
      * Create a new message instance.
      */
-    public function __construct($kontak, $balasan)
+    public function __construct($kontak, $balasan, $fromEmail = null, $fromName = null)
     {
         $this->kontak = $kontak;
         $this->balasan = $balasan;
+        $this->fromEmail = $fromEmail;
+        $this->fromName = $fromName;
     }
 
     /**
@@ -27,12 +31,19 @@ class BalasanPesanKontak extends Mailable
      */
     public function build()
     {
-        return $this->to($this->kontak->email, $this->kontak->nama)
+        $mail = $this->to($this->kontak->email, $this->kontak->nama)
             ->subject('Balasan Pesan Anda - Kelurahan Graha Indah')
             ->view('emails.balasan_pesan_kontak')
             ->with([
                 'kontak' => $this->kontak,
                 'balasan' => $this->balasan,
             ]);
+        
+        // Override FROM jika diberikan (untuk Resend)
+        if ($this->fromEmail) {
+            $mail->from($this->fromEmail, $this->fromName ?? config('mail.from.name'));
+        }
+        
+        return $mail;
     }
 }
