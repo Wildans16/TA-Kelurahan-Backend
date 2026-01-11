@@ -6,11 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Kontak;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-use App\Mail\BalasanPesanKontak;
 use Illuminate\Support\Facades\Mail;
+use App\Mail\BalasanPesanKontak;
 
 class KontakController extends Controller
 {
+
     /**
      * Display a listing of messages.
      */
@@ -188,8 +189,12 @@ class KontakController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'balasan' => 'required|string',
+            'balasan' => 'required|string|min:10',
+        ], [
+            'balasan.required' => 'Balasan tidak boleh kosong',
+            'balasan.min' => 'Balasan minimal 10 karakter',
         ]);
+
         if ($validator->fails()) {
             return response()->json([
                 'success' => false,
@@ -198,14 +203,56 @@ class KontakController extends Controller
             ], 422);
         }
 
-        // Kirim email balasan
-        Mail::to($kontak->email)->send(new BalasanPesanKontak($kontak, $request->balasan));
-        // Update status menjadi dibalas
-        $kontak->update(['status' => 'dibalas']);
+        try {
+            // Try SMTP first (Gmail)
+            try {
+                Mail::mailer('smtp')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                
+                $kontak->update(['status' => 'dibalas']);
+                
+                \Log::info('Reply sent via SMTP', [
+                    'kontak_id' => $kontak->id,
+                    'email' => $kontak->email
+                ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Balasan berhasil dikirim',
-        ]);
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Balasan berhasil dikirim via SMTP (Gmail)',
+                    'provider' => 'SMTP'
+                ]);
+
+            } catch (\Exception $smtpError) {
+                \Log::warning('SMTP failed, trying Resend', [
+                    'error' => $smtpError->getMessage()
+                ]);
+
+                // Fallback to Resend
+                Mail::mailer('resend')->send(new BalasanPesanKontak($kontak, $request->balasan));
+                
+                $kontak->update(['status' => 'dibalas']);
+                
+                \Log::info('Reply sent via Resend', [
+                    'kontak_id' => $kontak->id,
+                    'email' => $kontak->email
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Balasan berhasil dikirim via Resend API',
+                    'provider' => 'Resend'
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            \Log::error('All email providers failed', [
+                'kontak_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengirim email: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

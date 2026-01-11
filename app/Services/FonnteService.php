@@ -94,6 +94,38 @@ class FonnteService
     }
 
     /**
+     * Template pesan untuk notifikasi permohonan baru (pengajuan diterima)
+     * 
+     * @param object $permohonan
+     * @return string
+     */
+    public function templatePermohonanBaru($permohonan)
+    {
+        $message = "*KELURAHAN GRAHA INDAH*\n\n";
+        $message .= "✅ *Permohonan Berhasil Diterima*\n\n";
+        $message .= "Yth. Bapak/Ibu *{$permohonan->nama}*,\n\n";
+        $message .= "Terima kasih telah mengajukan permohonan layanan.\n\n";
+        $message .= "Detail permohonan Anda:\n";
+        $message .= "📋 No. Registrasi: *{$permohonan->nomor_registrasi}*\n";
+        $message .= "📝 Layanan: *{$permohonan->layanan->nama}*\n";
+        $message .= "📅 Tanggal Pengajuan: *" . $permohonan->created_at->format('d F Y, H:i') . " WIB*\n";
+        
+        if ($permohonan->estimasi_selesai) {
+            $message .= "⏰ Estimasi Selesai: *" . $permohonan->estimasi_selesai->format('d F Y') . "*\n";
+        }
+        
+        $message .= "\n📌 *Simpan nomor registrasi ini untuk pengecekan status permohonan Anda.*\n\n";
+        $message .= "Anda dapat mengecek status permohonan melalui:\n";
+        $message .= "🌐 Website: https://kelurahan-graha-indah-frontend.vercel.app/status\n";
+        $message .= "🏢 Atau datang langsung ke Kantor Kelurahan Graha Indah\n\n";
+        $message .= "---\n";
+        $message .= "🏢 Kelurahan Graha Indah\n";
+        $message .= "📞 Hubungi kami untuk informasi lebih lanjut";
+
+        return $message;
+    }
+
+    /**
      * Template pesan untuk notifikasi permohonan selesai
      * 
      * @param object $permohonan

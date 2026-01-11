@@ -6,6 +6,7 @@ use App\Models\Permohonan;
 use App\Http\Controllers\Controller;
 use App\Models\StatusTracking;
 use App\Models\Berkas;
+use App\Services\FonnteService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,13 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class PermohonanController extends Controller
 {
+    protected $fonnteService;
+
+    public function __construct(FonnteService $fonnteService)
+    {
+        $this->fonnteService = $fonnteService;
+    }
+
     public function index(Request $request)
     {
         $query = Permohonan::with(['layanan', 'statusTracking']);
@@ -147,6 +155,31 @@ class PermohonanController extends Controller
                 'ip' => $request->ip()
             ]);
 
+            // Kirim WhatsApp notifikasi untuk permohonan baru
+            if (!empty($permohonan->no_hp)) {
+                try {
+                    // Load relasi layanan sebelum kirim pesan
+                    $permohonan->load('layanan');
+                    
+                    $message = $this->fonnteService->templatePermohonanBaru($permohonan);
+                    $result = $this->fonnteService->sendMessage($permohonan->no_hp, $message);
+                    
+                    if ($result['success']) {
+                        \Log::info('WhatsApp notification sent for new permohonan', [
+                            'nomor_registrasi' => $permohonan->nomor_registrasi,
+                            'no_hp' => $permohonan->no_hp
+                        ]);
+                    }
+                } catch (\Exception $e) {
+                    // Log error tapi jangan gagalkan proses pembuatan permohonan
+                    \Log::error('Failed to send WhatsApp notification for new permohonan', [
+                        'permohonan_id' => $permohonan->id,
+                        'nomor_registrasi' => $permohonan->nomor_registrasi,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Permohonan berhasil dibuat',
@@ -228,6 +261,20 @@ class PermohonanController extends Controller
                     'tanggal' => now(),
                     'completed' => 1,
                 ]);
+
+                // Kirim WhatsApp notifikasi jika status berubah ke "selesai"
+                if ($request->status === 'selesai' && !empty($permohonan->no_hp)) {
+                    try {
+                        $message = $this->fonnteService->templatePermohonanSelesai($permohonan->load('layanan'));
+                        $this->fonnteService->sendMessage($permohonan->no_hp, $message);
+                    } catch (\Exception $e) {
+                        // Log error tapi jangan gagalkan proses update
+                        \Log::error('Failed to send WhatsApp notification', [
+                            'permohonan_id' => $permohonan->id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
             }
 
             DB::commit();
