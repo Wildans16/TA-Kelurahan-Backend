@@ -371,13 +371,36 @@ class PermohonanController extends Controller
             foreach ($request->ids as $id) {
                 $permohonan = Permohonan::find($id);
                 if ($permohonan) {
+                    // Simpan status lama
+                    $oldStatus = $permohonan->status;
+                    
+                    // Update status permohonan
                     $permohonan->update(['status' => $request->status]);
                     
-                    StatusTracking::create([
-                        'permohonan_id' => $id,
-                        'status' => $request->status,
-                        'catatan' => $request->catatan ?? 'Bulk update status'
-                    ]);
+                    // HANYA insert tracking baru jika status BERUBAH
+                    if ($oldStatus !== $request->status) {
+                        StatusTracking::create([
+                            'permohonan_id' => $id,
+                            'step' => $this->getStepName($request->status),
+                            'keterangan' => $request->catatan ?? $this->getDefaultKeterangan($request->status),
+                            'tanggal' => now(),
+                            'completed' => true,
+                        ]);
+
+                        // Kirim WhatsApp notifikasi jika status berubah ke "selesai"
+                        if ($request->status === 'selesai' && !empty($permohonan->no_hp)) {
+                            try {
+                                $message = $this->fonnteService->templatePermohonanSelesai($permohonan->load('layanan'));
+                                $this->fonnteService->sendMessage($permohonan->no_hp, $message);
+                            } catch (\Exception $e) {
+                                // Log error tapi jangan gagalkan proses update
+                                \Log::error('Failed to send WhatsApp notification', [
+                                    'permohonan_id' => $permohonan->id,
+                                    'error' => $e->getMessage()
+                                ]);
+                            }
+                        }
+                    }
                 }
             }
             
