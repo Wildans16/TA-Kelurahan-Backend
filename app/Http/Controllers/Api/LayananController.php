@@ -126,7 +126,37 @@ class LayananController extends Controller
             ], 404);
         }
 
-        $layanan->delete();
+        // Cek apakah layanan sedang digunakan dalam permohonan yang masih aktif
+        $permohonanAktif = $layanan->permohonan()
+            ->whereIn('status', ['baru', 'proses'])
+            ->count();
+
+        if ($permohonanAktif > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Layanan tidak dapat dihapus karena masih digunakan dalam ' . $permohonanAktif . ' permohonan yang sedang diproses',
+                'data' => [
+                    'total_permohonan_aktif' => $permohonanAktif
+                ]
+            ], 422);
+        }
+
+        // Cek total permohonan (termasuk yang sudah selesai/ditolak)
+        $totalPermohonan = $layanan->permohonan()->count();
+        
+        if ($totalPermohonan > 0) {
+            // Jika ada riwayat permohonan, gunakan soft delete
+            $layanan->delete();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Layanan berhasil dinonaktifkan (terdapat ' . $totalPermohonan . ' riwayat permohonan)',
+                'info' => 'Data layanan tetap tersimpan untuk keperluan riwayat'
+            ]);
+        }
+
+        // Jika tidak ada permohonan sama sekali, hapus permanent
+        $layanan->forceDelete();
 
         return response()->json([
             'success' => true,
